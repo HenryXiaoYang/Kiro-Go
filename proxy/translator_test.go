@@ -213,6 +213,23 @@ func TestOpenAIConversationIDRandomForSyntheticAnchor(t *testing.T) {
 	}
 }
 
+func TestOpenAIToKiroThinkingInjectsAntmlPrompt(t *testing.T) {
+	req := &OpenAIRequest{
+		Model: "claude-sonnet-4.5",
+		Messages: []OpenAIMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "hello"},
+		},
+	}
+
+	payload := OpenAIToKiro(req, true)
+	content := payload.ConversationState.CurrentMessage.UserInputMessage.Content
+
+	if !strings.Contains(content, buildThinkingModePrompt(defaultThinkingBudgetToken)) {
+		t.Fatalf("expected current content to include injected thinking prompt, got %q", content)
+	}
+}
+
 func TestClaudeToKiroDropsLeadingAssistantHistory(t *testing.T) {
 	req := &ClaudeRequest{
 		Model: "claude-sonnet-4.5",

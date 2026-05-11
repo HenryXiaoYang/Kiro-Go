@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -41,9 +42,7 @@ var modelMapOrdered = []modelMapping{
 	{"gpt-3.5-turbo", "claude-sonnet-4.5"},
 }
 
-// Thinking 模式提示
-const ThinkingModePrompt = `<thinking_mode>enabled</thinking_mode>
-<max_thinking_length>200000</max_thinking_length>`
+const defaultThinkingBudgetToken = 200000
 
 const minimalFallbackUserContent = "."
 const toolResultsContinuationPrefix = "Tool results:"
@@ -92,6 +91,20 @@ func isClaudeThinkingRequested(thinkingCfg *ClaudeThinkingConfig) bool {
 func MapModel(model string) string {
 	mapped, _ := ParseModelAndThinking(model, "-thinking")
 	return mapped
+}
+
+func buildThinkingModePrompt(budgetToken int) string {
+	if budgetToken <= 0 {
+		budgetToken = defaultThinkingBudgetToken
+	}
+	return fmt.Sprintf("<antml:thinking_mode>interleaved</antml:thinking_mode><antml:max_thinking_length>%d</antml:max_thinking_length>", budgetToken)
+}
+
+func resolveThinkingBudgetToken(thinkingCfg *ClaudeThinkingConfig) int {
+	if thinkingCfg != nil && thinkingCfg.BudgetTokens > 0 {
+		return thinkingCfg.BudgetTokens
+	}
+	return defaultThinkingBudgetToken
 }
 
 // ==================== Claude API 类型 ====================
@@ -178,7 +191,7 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	origin := "AI_EDITOR"
 
 	// 提取系统提示
-	systemPrompt := buildClaudeSystemPrompt(req.System, thinking)
+	systemPrompt := buildClaudeSystemPrompt(req.System, thinking, resolveThinkingBudgetToken(req.Thinking))
 
 	// 构建历史消息
 	history := make([]KiroHistoryMessage, 0)
@@ -279,15 +292,16 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	return payload
 }
 
-func buildClaudeSystemPrompt(system interface{}, thinking bool) string {
+func buildClaudeSystemPrompt(system interface{}, thinking bool, budgetToken int) string {
 	systemPrompt := extractSystemPrompt(system)
 	if !thinking {
 		return systemPrompt
 	}
+	thinkingPrompt := buildThinkingModePrompt(budgetToken)
 	if systemPrompt == "" {
-		return ThinkingModePrompt
+		return thinkingPrompt
 	}
-	return ThinkingModePrompt + "\n\n" + systemPrompt
+	return thinkingPrompt + "\n\n" + systemPrompt
 }
 
 func cloneClaudeRequestForThinking(req *ClaudeRequest, thinking bool) *ClaudeRequest {
@@ -297,13 +311,13 @@ func cloneClaudeRequestForThinking(req *ClaudeRequest, thinking bool) *ClaudeReq
 
 	cloned := *req
 	if thinking {
-		cloned.System = prependThinkingSystem(req.System)
+		cloned.System = prependThinkingSystem(req.System, resolveThinkingBudgetToken(req.Thinking))
 	}
 	return &cloned
 }
 
-func prependThinkingSystem(system interface{}) interface{} {
-	thinkingText := ThinkingModePrompt
+func prependThinkingSystem(system interface{}, budgetToken int) interface{} {
+	thinkingText := buildThinkingModePrompt(budgetToken)
 	if hasClaudeSystemContent(system) {
 		thinkingText += "\n"
 	}
@@ -682,7 +696,7 @@ func OpenAIToKiro(req *OpenAIRequest, thinking bool) *KiroPayload {
 
 	// 如果启用 thinking 模式，注入 thinking 提示
 	if thinking {
-		systemPrompt = ThinkingModePrompt + "\n\n" + systemPrompt
+		systemPrompt = buildThinkingModePrompt(0) + "\n\n" + systemPrompt
 	}
 
 	// 构建历史消息
